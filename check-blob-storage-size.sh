@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Check the size of a blob storage container and each file and folder in it
+
 # Set the name of the storage account and container
 storage_account_name="anildwaadlsv2"
 container_name="folder2"
