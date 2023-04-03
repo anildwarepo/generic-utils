@@ -72,6 +72,12 @@
               "description": "Specifies the name of the private link to the key vault."
           }
       },
+      "currentUserAADObjectId": {
+          "type": "string",
+          "metadata": {
+              "description": "az ad user show --id someone@example.com --query objectId"
+          }
+      },
       "vnetNameRgName": {
             "type": "String",
             "defaultValue": "vnet",
@@ -88,21 +94,21 @@
       },
       "privateEndpointSubnetName": {
         "type": "string",
-        "defaultValue": "ml-pe",
+        "defaultValue": "subnet-pe",
         "metadata": {
           "description": "The name of the virtual network subnet used for allocating IP addresses for private endpoints."
         }
       },
       "keyvaultPrivateDNSZoneResourceGroupName": {
 			"type": "string",
-      "defaultValue": "lineage-demo",
+      "defaultValue": "privatednszone-rg",
 			"metadata": {
 				"description": "Resource group name where privatelink.vaultcore.azure.net Private DNS Zone exists"
 			}
 		},
      "blobPrivateDNSZoneResourceGroupName": {
 			"type": "string",
-      "defaultValue": "lineage-demo",
+      "defaultValue": "privatednszone-rg",
 			"metadata": {
 				"description": "Resource group name where privatelink.blob.core.windows.net Private DNS Zone exists"
 			}
@@ -110,9 +116,6 @@
     },
 
     "variables" : {
-        "rgId": "[resourceGroup().id]",
-        "uniqueName": "[substring(uniqueString(variables('rgId')),0,4)]",
-        "vKeyVaultName": "[concat('keyvault',variables('uniqueName'))]",
         "keyvaultPrivateEndpointGroupName": "vault",
         "keyvaultPrivateDnsZoneName": "privatelink.vaultcore.azure.net",
         "privateEndpointStorageBlobName": "[format('{0}-blob-private-endpoint', parameters('storageAccountName'))]",
@@ -120,9 +123,146 @@
     },
 
     "resources": [
-      
-     
       {
+        "type": "Microsoft.KeyVault/vaults",
+        "apiVersion": "2019-09-01",
+        "name": "[parameters('keyVaultName')]",
+        "location": "[parameters('location')]",
+        "properties": {
+          "sku": {
+            "name": "standard",
+            "family": "A"
+          },
+          "enableSoftDelete": true,
+          "enablePurgeProtection": true,
+          "publicNetworkAccess": "Disabled",
+          "allowBlobPublicAccess": false,
+          "networkAcls": {
+            "bypass": "AzureServices",
+            "defaultAction": "Deny"
+          },
+          "tenantId": "[parameters('tenantId')]",
+          "accessPolicies": []
+        },
+        "resources":[
+          {
+            "type": "accessPolicies",
+            "apiVersion": "2016-10-01",
+            "name": "add",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+              "[parameters('keyVaultName')]"
+            ],
+            "properties": {
+              "accessPolicies": [
+                {
+                  "tenantId": "[parameters('tenantId')]",
+                  "permissions": {
+                    "keys": [
+                      "unwrapKey",
+                      "wrapKey",
+                      "get",
+                      "create",
+                      "update"]
+                  },
+                  "objectId": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('userAssignedIdentityResourceGroupName')), 'Microsoft.ManagedIdentity/userAssignedIdentities', parameters('userAssignedIdentityName')), '2018-11-30').principalId]"
+                },
+                {
+                  "tenantId": "[parameters('tenantId')]",
+                  "permissions": {
+                    "keys": [
+                      "unwrapKey",
+                      "wrapKey",
+                      "list",
+                      "get",
+                      "create",
+                      "update"]
+                  },
+                  "objectId": "19dd504a-49a2-4e4e-a4ac-a0b783e54053"
+                },
+                {
+                  "tenantId": "[parameters('tenantId')]",
+                  "permissions": {
+                    "keys": [
+                      "unwrapKey",
+                      "wrapKey",
+                      "list",
+                      "get",
+                      "create",
+                      "update"]
+                  },
+                  "objectId": "[parameters('currentUserAADObjectId')]"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "type": "Microsoft.KeyVault/vaults/keys",
+        "apiVersion": "2021-10-01",
+        "name": "[format('{0}/{1}', parameters('keyVaultName'), parameters('keyVaultKeyName'))]",
+        "properties": {
+          "attributes": {
+            "enabled": true,
+            "exp": "[parameters('keyExpiration')]"
+          },
+          "keySize": 4096,
+          "kty": "RSA"
+        },
+        "dependsOn": [
+          "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]"
+        ]
+      },
+      {
+            "type": "Microsoft.Network/privateEndpoints",
+            "apiVersion": "2020-04-01",
+            "name": "[parameters('keyvaultPrivateEndpointName')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults/keys', parameters('keyVaultName'), parameters('keyVaultKeyName'))]"
+            ],
+            "properties": {
+                "privateLinkServiceConnections": [
+                {
+                    "name": "[parameters('keyvaultPrivateEndpointName')]",
+                    "properties": {
+                    "privateLinkServiceId": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+                    "groupIds": [
+                        "[variables('keyvaultPrivateEndpointGroupName')]"
+                    ]
+                    }
+                }
+                ],
+                "subnet": {
+                "id": "[resourceId(parameters('vnetNameRgName'),'Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('privateEndpointSubnetName'))]"
+                },
+                "customDnsConfigs": [
+                {
+                    "fqdn": "[concat(parameters('keyVaultName'), '.vault.azure.net')]"
+                }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+            "apiVersion": "2022-05-01",
+            "name": "[format('{0}/{1}', parameters('keyvaultPrivateEndpointName'), 'keyvaultPrivateDnsZoneGroup')]",
+            "properties": {
+                "privateDnsZoneConfigs": [
+                {
+                    "name": "config",
+                    "properties": {
+                    "privateDnsZoneId": "[resourceId(parameters('keyvaultPrivateDNSZoneResourceGroupName'),'Microsoft.Network/privateDnsZones', variables('keyvaultPrivateDnsZoneName'))]"
+                    }
+                }
+                ]
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', parameters('keyvaultPrivateEndpointName'))]"
+            ]
+        },
+        {
         "type": "Microsoft.Storage/storageAccounts",
         "apiVersion": "2021-04-01",
         "name": "[parameters('storageAccountName')]",
@@ -142,7 +282,7 @@
           "allowBlobPublicAccess": false,
           "networkAcls": {
             "bypass": "None",
-            "defaultAction": "Allow"
+            "defaultAction": "Deny"
           },
           "accessTier": "Hot",
           "supportsHttpsTrafficOnly": true,
@@ -163,7 +303,9 @@
             }
           }
         },
-        "dependsOn": []
+        "dependsOn": [
+          "[resourceId('Microsoft.KeyVault/vaults/keys', parameters('keyVaultName'), parameters('keyVaultKeyName'))]"
+        ]
       },
       {
         "type": "Microsoft.Network/privateEndpoints",
@@ -176,7 +318,7 @@
           },
           "privateLinkServiceConnections": [
             {
-              "name": "MyStorageBlobPrivateLinkConnection",
+              "name": "storageBlobPrivateLinkConnection",
               "properties": {
                 "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
                 "groupIds": [
@@ -208,5 +350,7 @@
           "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointStorageBlobName'))]"
         ]
       }
+      
+      
     ]
   }
