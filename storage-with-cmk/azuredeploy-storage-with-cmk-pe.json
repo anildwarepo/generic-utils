@@ -75,7 +75,7 @@
       "currentUserAADObjectId": {
           "type": "string",
           "metadata": {
-              "description": "az ad user show --id someone@example.com --query objectId"
+              "description": "az ad user show --id someone@example.com --query id"
           }
       },
       "vnetNameRgName": {
