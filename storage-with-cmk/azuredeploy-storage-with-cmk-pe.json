@@ -178,19 +178,6 @@
                       "create",
                       "update"]
                   },
-                  "objectId": "19dd504a-49a2-4e4e-a4ac-a0b783e54053"
-                },
-                {
-                  "tenantId": "[parameters('tenantId')]",
-                  "permissions": {
-                    "keys": [
-                      "unwrapKey",
-                      "wrapKey",
-                      "list",
-                      "get",
-                      "create",
-                      "update"]
-                  },
                   "objectId": "[parameters('currentUserAADObjectId')]"
                 }
               ]
